@@ -687,8 +687,14 @@ func createRevokeQuery(getter ResourceSchemeGetter) string {
 		for _, p := range getter("objects").(*schema.Set).List() {
 			paramNames = append(paramNames, p.(string))
 		}
+		privileges := getter("privileges").(*schema.Set)
+		privStr := "ALL"
+		if privileges.Len() > 0 {
+			privStr = setToPgIdentSimpleList(privileges)
+		}
 		query = fmt.Sprintf(
-			"REVOKE ALL ON PARAMETER %s FROM %s",
+			"REVOKE %s ON PARAMETER %s FROM %s",
+			privStr,
 			strings.Join(paramNames, ","),
 			pq.QuoteIdentifier(getter("role").(string)),
 		)
