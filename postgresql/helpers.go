@@ -261,6 +261,7 @@ var allowedPrivileges = map[string][]string{
 	"foreign_data_wrapper": {"ALL", "USAGE"},
 	"foreign_server":       {"ALL", "USAGE"},
 	"column":               {"ALL", "SELECT", "INSERT", "UPDATE", "REFERENCES"},
+	"parameter":            {"ALL", "SET", "ALTER SYSTEM"},
 }
 
 // validatePrivileges checks that privileges to apply are allowed for this object type.
