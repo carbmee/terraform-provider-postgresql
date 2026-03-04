@@ -212,6 +212,7 @@ func Provider() *schema.Provider {
 			"postgresql_subscription":              resourcePostgreSQLSubscription(),
 			"postgresql_physical_replication_slot": resourcePostgreSQLPhysicalReplicationSlot(),
 			"postgresql_schema":                    resourcePostgreSQLSchema(),
+			"postgresql_foreign_schema":            resourcePostgreSQLForeignSchema(),
 			"postgresql_role":                      resourcePostgreSQLRole(),
 			"postgresql_function":                  resourcePostgreSQLFunction(),
 			"postgresql_server":                    resourcePostgreSQLServer(),
