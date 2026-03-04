@@ -46,6 +46,7 @@ const (
 	featureServer
 	featureCreateRoleSelfGrant
 	featureSecurityLabel
+	featureParameterPrivileges
 )
 
 var (
@@ -122,6 +123,10 @@ var (
 		// https://www.postgresql.org/docs/16/release-16.html#RELEASE-16-PRIVILEGES
 		featureCreateRoleSelfGrant: semver.MustParseRange(">=16.0.0"),
 		featureSecurityLabel:       semver.MustParseRange(">=11.0.0"),
+
+		// GRANT SET ON PARAMETER support
+		// https://www.postgresql.org/docs/15/sql-grant.html
+		featureParameterPrivileges: semver.MustParseRange(">=15.0.0"),
 	}
 )
 
