@@ -1,12 +1,13 @@
 package postgresql
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/lib/pq"
 )
 
@@ -15,21 +16,31 @@ const (
 	dbParamDatabaseAttr = "database"
 )
 
+// paramNameRe matches valid custom GUC parameter names (extension.setting).
+var paramNameRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$`)
+
 func resourcePostgreSQLDBParameter() *schema.Resource {
 	return &schema.Resource{
 		Create: PGResourceFunc(resourcePostgreSQLDBParameterCreate),
 		Read:   PGResourceFunc(resourcePostgreSQLDBParameterRead),
 		Delete: PGResourceFunc(resourcePostgreSQLDBParameterDelete),
+		Exists: PGResourceExistsFunc(resourcePostgreSQLDBParameterExists),
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
 
 		Schema: map[string]*schema.Schema{
 			dbParamNameAttr: {
-				Type:        schema.TypeString,
-				Required:    true,
-				ForceNew:    true,
-				Description: "The name of the configuration parameter (e.g. myext.setting)",
+				Type:     schema.TypeString,
+				Required: true,
+				ForceNew: true,
+				ValidateFunc: validation.StringMatch(
+					paramNameRe,
+					"parameter name must be in the form 'extension.setting' (e.g. myext.setting)",
+				),
+				Description: "The name of the custom GUC parameter (e.g. myext.setting). " +
+					"Used to initialize the parameter at database level so that " +
+					"GRANT SET ON PARAMETER (PostgreSQL >= 15) can reference it.",
 			},
 			dbParamDatabaseAttr: {
 				Type:        schema.TypeString,
@@ -45,19 +56,21 @@ func resourcePostgreSQLDBParameterCreate(db *DBConnection, d *schema.ResourceDat
 	paramName := d.Get(dbParamNameAttr).(string)
 	database := d.Get(dbParamDatabaseAttr).(string)
 
-	// ALTER DATABASE does not run inside a transaction block
-	conn, err := db.client.config.NewClient(database).Connect()
-	if err != nil {
-		return err
-	}
-
-	sql := fmt.Sprintf("ALTER DATABASE %s SET %s TO ''", pq.QuoteIdentifier(database), paramName)
-	if _, err := conn.Exec(sql); err != nil {
+	query := fmt.Sprintf("ALTER DATABASE %s SET %s TO ''", pq.QuoteIdentifier(database), paramName)
+	if _, err := db.Exec(query); err != nil {
 		return fmt.Errorf("error setting parameter %q on database %q: %w", paramName, database, err)
 	}
 
 	d.SetId(generateDBParameterID(database, paramName))
 	return resourcePostgreSQLDBParameterReadImpl(db, d)
+}
+
+func resourcePostgreSQLDBParameterExists(db *DBConnection, d *schema.ResourceData) (bool, error) {
+	database, paramName, err := getDBParameterFromID(d, db.client.databaseName)
+	if err != nil {
+		return false, err
+	}
+	return dbParameterExists(db, database, paramName)
 }
 
 func resourcePostgreSQLDBParameterRead(db *DBConnection, d *schema.ResourceData) error {
@@ -70,23 +83,14 @@ func resourcePostgreSQLDBParameterReadImpl(db *DBConnection, d *schema.ResourceD
 		return err
 	}
 
-	var exists bool
-	err = db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1
-			FROM pg_db_role_setting, unnest(setconfig) AS cfg
-			WHERE setdatabase = (SELECT oid FROM pg_database WHERE datname = $1)
-			  AND setrole = 0
-			  AND cfg LIKE $2 || '=%'
-		)`, database, paramName).Scan(&exists)
-
-	switch {
-	case err == sql.ErrNoRows || !exists:
+	exists, err := dbParameterExists(db, database, paramName)
+	if err != nil {
+		return fmt.Errorf("error reading db parameter: %w", err)
+	}
+	if !exists {
 		log.Printf("[WARN] PostgreSQL db parameter (%s) not found for database %s", paramName, database)
 		d.SetId("")
 		return nil
-	case err != nil:
-		return fmt.Errorf("error reading db parameter: %w", err)
 	}
 
 	d.Set(dbParamNameAttr, paramName)
@@ -99,18 +103,29 @@ func resourcePostgreSQLDBParameterDelete(db *DBConnection, d *schema.ResourceDat
 	paramName := d.Get(dbParamNameAttr).(string)
 	database := d.Get(dbParamDatabaseAttr).(string)
 
-	conn, err := db.client.config.NewClient(database).Connect()
-	if err != nil {
-		return err
-	}
-
-	sql := fmt.Sprintf("ALTER DATABASE %s RESET %s", pq.QuoteIdentifier(database), paramName)
-	if _, err := conn.Exec(sql); err != nil {
+	query := fmt.Sprintf("ALTER DATABASE %s RESET %s", pq.QuoteIdentifier(database), paramName)
+	if _, err := db.Exec(query); err != nil {
 		return fmt.Errorf("error resetting parameter %q on database %q: %w", paramName, database, err)
 	}
 
 	d.SetId("")
 	return nil
+}
+
+func dbParameterExists(db *DBConnection, database, paramName string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1
+			FROM pg_db_role_setting, unnest(setconfig) AS cfg
+			WHERE setdatabase = (SELECT oid FROM pg_database WHERE datname = $1)
+			  AND setrole = 0
+			  AND cfg LIKE $2 || '=%'
+		)`, database, paramName).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func generateDBParameterID(database, paramName string) string {
