@@ -202,6 +202,15 @@ func resourcePostgreSQLGrantCreateOrUpdate(db *DBConnection, d *schema.ResourceD
 		if err := revokeRolePrivileges(txn, d, usePrevious); err != nil {
 			return err
 		}
+		// For parameter grants, ensure each GUC is known in the current session
+		// so PostgreSQL accepts the GRANT SET ON PARAMETER statement.
+		if objectType == "parameter" {
+			for _, p := range d.Get("objects").(*schema.Set).List() {
+				if _, err := txn.Exec(fmt.Sprintf("SET LOCAL %s = ''", p.(string))); err != nil {
+					return fmt.Errorf("could not initialize parameter %s: %w", p.(string), err)
+				}
+			}
+		}
 		if err := grantRolePrivileges(txn, d); err != nil {
 			return err
 		}
@@ -255,6 +264,13 @@ func resourcePostgreSQLGrantDelete(db *DBConnection, d *schema.ResourceData) err
 	}
 
 	if err := withRolesGranted(txn, owners, func() error {
+		if objectType == "parameter" {
+			for _, p := range d.Get("objects").(*schema.Set).List() {
+				if _, err := txn.Exec(fmt.Sprintf("SET LOCAL %s = ''", p.(string))); err != nil {
+					return fmt.Errorf("could not initialize parameter %s: %w", p.(string), err)
+				}
+			}
+		}
 		return revokeRolePrivileges(txn, d, false)
 	}); err != nil {
 		return err
