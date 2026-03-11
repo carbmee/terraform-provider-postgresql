@@ -1,6 +1,7 @@
 package postgresql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -44,6 +45,13 @@ func resourcePostgreSQLGrant() *schema.Resource {
 		Update: PGResourceFunc(resourcePostgreSQLGrantUpdate),
 		Read:   PGResourceFunc(resourcePostgreSQLGrantRead),
 		Delete: PGResourceFunc(resourcePostgreSQLGrantDelete),
+
+		CustomizeDiff: func(ctx context.Context, d *schema.ResourceDiff, meta interface{}) error {
+			if d.Get("initialize_parameters").(bool) && d.Get("object_type").(string) != "parameter" {
+				return fmt.Errorf("initialize_parameters can only be set when object_type is 'parameter'")
+			}
+			return nil
+		},
 
 		Schema: map[string]*schema.Schema{
 			"role": {
@@ -100,6 +108,12 @@ func resourcePostgreSQLGrant() *schema.Resource {
 				ForceNew:    true,
 				Default:     false,
 				Description: "Permit the grant recipient to grant it to others",
+			},
+			"initialize_parameters": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "When object_type is 'parameter', run SET LOCAL for each parameter before granting to ensure PostgreSQL recognises custom GUC names. Enable if the parameters are not yet known to the server.",
 			},
 		},
 	}
@@ -204,7 +218,7 @@ func resourcePostgreSQLGrantCreateOrUpdate(db *DBConnection, d *schema.ResourceD
 		}
 		// For parameter grants, ensure each GUC is known in the current session
 		// so PostgreSQL accepts the GRANT SET ON PARAMETER statement.
-		if objectType == "parameter" {
+		if objectType == "parameter" && d.Get("initialize_parameters").(bool) {
 			for _, p := range d.Get("objects").(*schema.Set).List() {
 				if _, err := txn.Exec(fmt.Sprintf("SET LOCAL %s = ''", p.(string))); err != nil {
 					return fmt.Errorf("could not initialize parameter %s: %w", p.(string), err)
@@ -264,7 +278,7 @@ func resourcePostgreSQLGrantDelete(db *DBConnection, d *schema.ResourceData) err
 	}
 
 	if err := withRolesGranted(txn, owners, func() error {
-		if objectType == "parameter" {
+		if objectType == "parameter" && d.Get("initialize_parameters").(bool) {
 			for _, p := range d.Get("objects").(*schema.Set).List() {
 				if _, err := txn.Exec(fmt.Sprintf("SET LOCAL %s = ''", p.(string))); err != nil {
 					return fmt.Errorf("could not initialize parameter %s: %w", p.(string), err)

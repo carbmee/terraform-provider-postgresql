@@ -38,10 +38,12 @@ resource "postgresql_role" "myrole" {
 }
 
 # Grant the role permission to SET the custom parameter.
+# initialize_params = true is required for custom GUC names not yet known to the server.
 resource "postgresql_grant" "myext_setting" {
-  database    = postgresql_database.mydb.name
-  object_type = "parameter"
-  objects     = ["myext.setting"]
-  role        = postgresql_role.myrole.name
-  privileges  = ["SET"]
+  database          = postgresql_database.mydb.name
+  object_type       = "parameter"
+  objects           = ["myext.setting"]
+  role              = postgresql_role.myrole.name
+  privileges        = ["SET"]
+  initialize_parameters = true
 }
