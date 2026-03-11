@@ -1,5 +1,5 @@
-# Tests that postgresql_db_parameter initializes a custom parameter at database level
-# so that GRANT SET ON PARAMETER succeeds (requires PostgreSQL >= 15).
+# Tests that GRANT SET ON PARAMETER works for custom GUC parameters (requires PostgreSQL >= 15).
+# The grant resource initializes the parameter in the current session automatically.
 #
 # Usage:
 #   docker compose up -d
@@ -37,18 +37,11 @@ resource "postgresql_role" "myrole" {
   password = "myrole-password"
 }
 
-# Initialize the custom parameter at the database level so PostgreSQL
-# recognizes it before we try to GRANT SET ON PARAMETER.
-resource "postgresql_db_parameter" "myext_setting" {
-  database = postgresql_database.mydb.name
-  name     = "myext.setting"
-}
-
-# Now grant the role permission to SET the parameter.
+# Grant the role permission to SET the custom parameter.
 resource "postgresql_grant" "myext_setting" {
-  database    = postgresql_db_parameter.myext_setting.database
+  database    = postgresql_database.mydb.name
   object_type = "parameter"
-  objects     = [postgresql_db_parameter.myext_setting.name]
+  objects     = ["myext.setting"]
   role        = postgresql_role.myrole.name
   privileges  = ["SET"]
 }
