@@ -47,6 +47,7 @@ const (
 	featureCreateRoleSelfGrant
 	featureSecurityLabel
 	featureParameterPrivileges
+	featureImportForeignSchema
 )
 
 var (
@@ -127,6 +128,10 @@ var (
 		// GRANT SET ON PARAMETER support
 		// https://www.postgresql.org/docs/15/sql-grant.html
 		featureParameterPrivileges: semver.MustParseRange(">=15.0.0"),
+
+		// IMPORT FOREIGN SCHEMA support
+		// https://www.postgresql.org/docs/9.5/sql-importforeignschema.html
+		featureImportForeignSchema: semver.MustParseRange(">=9.5.0"),
 	}
 )
 
