@@ -159,6 +159,16 @@ func withRolesGranted(txn *sql.Tx, roles []string, fn func() error) error {
 		return fn()
 	}
 
+	// Lock all involved pg_authid entries in OID order before any membership
+	// changes to prevent deadlocks from concurrent Terraform applies acquiring
+	// the same locks in different orders.
+	allRoles := make([]string, 0, len(roles)+1)
+	allRoles = append(allRoles, currentUser)
+	allRoles = append(allRoles, roles...)
+	if err := pgLockRoleMemberships(txn, allRoles); err != nil {
+		return err
+	}
+
 	var grantedRoles []string
 	var revokedRoles []string
 
@@ -586,6 +596,20 @@ func pgLockRole(txn *sql.Tx, role string) error {
 
 	return nil
 }
+// pgLockRoleMemberships acquires advisory locks on all given roles in ascending
+// OID order before any role membership changes. Consistent ordering prevents
+// circular lock acquisition (deadlock) when concurrent transactions modify
+// overlapping sets of roles in pg_authid.
+func pgLockRoleMemberships(txn *sql.Tx, roles []string) error {
+	if _, err := txn.Exec(
+		"SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_roles WHERE rolname = ANY($1) ORDER BY oid",
+		pq.Array(roles),
+	); err != nil {
+		return fmt.Errorf("could not get advisory lock for role memberships: %w", err)
+	}
+	return nil
+}
+
 // Lock a schema avoid concurrent updates during revoke query.
 func pgLockSchema(txn *sql.Tx, schema string) error {
 	if _, err := txn.Exec("SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_catalog.pg_namespace WHERE nspname = $1", schema); err != nil {
