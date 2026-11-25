@@ -112,20 +112,21 @@ func resourcePostgreSQLUserMappingReadImpl(db *DBConnection, d *schema.ResourceD
 	defer deferredRollback(txn)
 
 	var userMappingOptions []string
+	var optionsHidden bool
 	// a failed query aborts the txn, so the fallback needs a savepoint to roll back to
 	if _, err := txn.Exec("SAVEPOINT user_mapping_read"); err != nil {
 		return err
 	}
-	query := "SELECT umoptions FROM information_schema._pg_user_mappings WHERE authorization_identifier = $1 and foreign_server_name = $2"
-	err = txn.QueryRow(query, username, serverName).Scan(pq.Array(&userMappingOptions))
+	query := "SELECT umoptions, umoptions IS NULL FROM information_schema._pg_user_mappings WHERE authorization_identifier = $1 and foreign_server_name = $2"
+	err = txn.QueryRow(query, username, serverName).Scan(pq.Array(&userMappingOptions), &optionsHidden)
 
 	if err != sql.ErrNoRows && err != nil {
 		// Fallback to pg_user_mappings table if information_schema._pg_user_mappings is not available
 		if _, err := txn.Exec("ROLLBACK TO SAVEPOINT user_mapping_read"); err != nil {
 			return err
 		}
-		query := "SELECT umoptions FROM pg_user_mappings WHERE usename = $1 and srvname = $2"
-		err = txn.QueryRow(query, username, serverName).Scan(pq.Array(&userMappingOptions))
+		query := "SELECT umoptions, umoptions IS NULL FROM pg_user_mappings WHERE usename = $1 and srvname = $2"
+		err = txn.QueryRow(query, username, serverName).Scan(pq.Array(&userMappingOptions), &optionsHidden)
 	}
 
 	switch {
@@ -137,15 +138,18 @@ func resourcePostgreSQLUserMappingReadImpl(db *DBConnection, d *schema.ResourceD
 		return fmt.Errorf("error reading user mapping: %w", err)
 	}
 
-	mappedOptions := make(map[string]any)
-	for _, v := range userMappingOptions {
-		pair := strings.SplitN(v, "=", 2)
-		mappedOptions[pair[0]] = pair[1]
-	}
-
 	d.Set(userMappingUserNameAttr, username)
 	d.Set(userMappingServerNameAttr, serverName)
-	d.Set(userMappingOptionsAttr, mappedOptions)
+	// pg_user_mappings shows NULL umoptions to non-superusers for other users' mappings;
+	// keep the state value, else every plan tries to ADD options that already exist
+	if !optionsHidden {
+		mappedOptions := make(map[string]any)
+		for _, v := range userMappingOptions {
+			pair := strings.SplitN(v, "=", 2)
+			mappedOptions[pair[0]] = pair[1]
+		}
+		d.Set(userMappingOptionsAttr, mappedOptions)
+	}
 	d.SetId(generateUserMappingID(d))
 
 	return nil
